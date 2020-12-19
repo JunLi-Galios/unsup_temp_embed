@@ -7,7 +7,9 @@ __author__ = 'Anna Kukleva'
 __date__ = 'August 2018'
 
 import numpy as np
+import random
 import os
+from os.path import join
 import os.path as ops
 import torch
 import re
@@ -19,6 +21,7 @@ from sklearn.cluster import MiniBatchKMeans
 
 from ute.video import Video
 from ute.models import mlp
+from ute.models import cls
 from ute.utils.arg_pars import opt
 from ute.utils.logging_setup import logger
 from ute.eval_utils.accuracy_class import Accuracy
@@ -27,12 +30,58 @@ from ute.utils.util_functions import join_data, timing, dir_check
 from ute.utils.visualization import Visual, plot_segm
 from ute.probabilistic_utils.gmm_utils import AuxiliaryGMM, GMM_trh
 from ute.eval_utils.f1_score import F1Score
-from ute.models.dataset_loader import load_reltime
-from ute.models.training_embed import load_model, training
+from ute.models.dataset_loader import load_reltime, load_pseudo_gt, load_single_video
+from ute.models.training_embed import load_model, training, training_cls
+from ute.viterbi_utils.grammar import SingleTranscriptGrammar
+from ute.viterbi_utils.length_model import PoissonModel
+from ute.viterbi_utils.viterbi_w_lenth import Viterbi
 
+
+class Buffer(object):
+
+    def __init__(self, buffer_size, n_classes):
+        self.features = []
+        self.transcript = []
+        self.framelabels = []
+        self.instance_counts = []
+        self.label_counts = []
+        self.buffer_size = buffer_size
+        self.n_classes = n_classes
+        self.next_position = 0
+        self.frame_selectors = []
+
+    def add_sequence(self, features, transcript, framelabels):
+        if len(self.features) < self.buffer_size:
+            # sequence data 
+            self.features.append(features)
+            self.transcript.append(transcript)
+            self.framelabels.append(framelabels)
+            # statistics for prior and mean lengths
+            self.instance_counts.append( np.array( [ sum(np.array(transcript) == c) for c in range(self.n_classes) ] ) )
+            self.label_counts.append( np.array( [ sum(np.array(framelabels) == c) for c in range(self.n_classes) ] ) )
+            self.next_position = (self.next_position + 1) % self.buffer_size
+        else:
+            # sequence data
+            self.features[self.next_position] = features
+            self.transcript[self.next_position] = transcript
+            self.framelabels[self.next_position] = framelabels
+            # statistics for prior and mean lengths
+            self.instance_counts[self.next_position] = np.array( [ sum(np.array(transcript) == c) for c in range(self.n_classes) ] )
+            self.label_counts[self.next_position] = np.array( [ sum(np.array(framelabels) == c) for c in range(self.n_classes) ] )
+            self.next_position = (self.next_position + 1) % self.buffer_size
+        # # update frame selectors
+        # self.frame_selectors = []
+        # for seq_idx in range(len(self.features)):
+        #     self.frame_selectors += [ (seq_idx, frame) for frame in range(self.features[seq_idx].shape[1]) ]
+
+    # def random(self):
+    #     return random.choice(self.frame_selectors) # return sequence_idx and frame_idx within the sequence
+
+    # def n_frames(self):
+    #     return len(self.frame_selectors)
 
 class Corpus(object):
-    def __init__(self, subaction='coffee', K=None):
+    def __init__(self, subaction='coffee', K=None, buffer_size=2000, frame_sampling=30, mean_lengths_file=None, prior_file=None):
         """
         Args:
             Q: number of Gaussian components in each mixture
@@ -45,6 +94,7 @@ class Corpus(object):
         logger.debug('%s  subactions: %d' % (subaction, self._K))
         self.iter = 0
         self.return_stat = {}
+        self._frame_sampling = frame_sampling
 
         self._acc_old = 0
         self._videos = []
@@ -73,6 +123,19 @@ class Corpus(object):
         dir_check(os.path.join(opt.output_dir, 'segmentation'))
         dir_check(os.path.join(opt.output_dir, 'likelihood'))
         self.vis = None  # visualization tool
+
+        self.decoder = Viterbi(None, None, self._frame_sampling, max_hypotheses = np.inf)
+
+        self.buffer = Buffer(buffer_size, self._K)
+        if mean_lengths_file is None:            
+            self.mean_lengths = np.ones((self._K), dtype=np.float32) * self._frame_sampling * 2
+        else:
+            self.mean_lengths = np.loadtxt(mean_lengths_file)
+        
+        if prior_file is None:
+            self.prior = np.ones((self._K), dtype=np.float32) / self._K
+        else:
+            self.prior = np.loadtxt(prior_file)
 
     def _init_videos(self):
         logger.debug('.')
@@ -206,80 +269,35 @@ class Corpus(object):
         logger.debug('MLP training: MSE: %f' % mse)
 
 
-    @timing
-    def _gaussians_fit(self):
-        """ Fit GMM to video features.
+    def train_classifier(self, video=None):
+        logger.debug('train framewise classifier')
+        # train_classifier
+        logger.debug('.')
 
-        Define subset of video collection and fit on it gaussian mixture model.
-        If idx_exclude = -1, then whole video collection is used for comprising
-        the subset, otherwise video collection excluded video with this index.
-        Args:
-            idx_exclude: video to exclude (-1 or int in range(0, #_of_videos))
-            save: in case of mp lib all computed likelihoods are saved on disk
-                before the next step
-        """
-        for k in range(self._K):
-            gmm = GaussianMixture(n_components=1,
-                                  covariance_type='full',
-                                  max_iter=150,
-                                  random_state=opt.seed,
-                                  reg_covar=1e-4)
-            total_indexes = np.zeros(len(self._features), dtype=np.bool)
-            for idx, video in enumerate(self._videos):
-                indexes = np.where(np.asarray(video._z) == k)[0]
-                if len(indexes) == 0:
-                    continue
-                temp = np.zeros(video.n_frames, dtype=np.bool)
-                temp[indexes] = True
-                total_indexes[video.global_range] = temp
+        if video == None:
+            dataloader = load_pseudo_gt(videos=self._videos,
+                                    features=self._embedded_feat,
+                                    pseudo_gt=self.pseudo_gt_with_bg)
+            num_epoch = 15
+        else:
+            dataloader = load_single_video(videos=self._videos,
+                                    features=self._embedded_feat,
+                                    pseudo_gt=self.pseudo_gt_with_bg,
+                                    video=video)
+            num_epoch = 5
 
-            total_indexes = np.array(total_indexes, dtype=np.bool)
-            if opt.load_embed_feat:
-                feature = self._features[total_indexes, :]
-            else:
-                feature = self._embedded_feat[total_indexes, :]
-            time1 = time.time()
-            try:
-                gmm.fit(feature)
-            except ValueError:
-                gmm = AuxiliaryGMM()
-            time2 = time.time()
-            # logger.debug('fit gmm %0.6f %d ' % ((time2 - time1), len(feature))
-            #              + str(gmm.converged_))
+        model, loss, optimizer = cls.create_model(self._K)
 
-            self._gaussians[k] = gmm
-
-        if opt.bg:
-            # with bg model I assume that I use only one component
-            for gm_idx, gmm in self._gaussians.items():
-                self._gaussians[gm_idx] = GMM_trh(gmm)
-
-    @timing
-    def gaussian_model(self):
-        logger.debug('Fit Gaussian Mixture Model to the whole dataset at once')
-        self._gaussians_fit()
+        self._classifier = training_cls(dataloader, num_epoch,
+                                       save=opt.save_model,
+                                       model=model,
+                                       loss=loss,
+                                       optimizer=optimizer,
+                                       name=opt.model_name)
+        # update video likelihood
         for video_idx in range(len(self._videos)):
             self._video_likelihood_grid(video_idx)
-
-        if opt.bg:
-            scores = None
-            for video in self._videos:
-                scores = join_data(scores, video.get_likelihood(), np.vstack)
-
-            bg_trh_score = np.sort(scores, axis=0)[int((opt.bg_trh / 100) * scores.shape[0])]
-
-            bg_trh_set = []
-            for action_idx in range(self._K):
-                new_bg_trh = self._gaussians[action_idx].mean_score - bg_trh_score[action_idx]
-                self._gaussians[action_idx].update_trh(new_bg_trh=new_bg_trh)
-                bg_trh_set.append(new_bg_trh)
-
-            logger.debug('new bg_trh: %s' % str(bg_trh_set))
-            trh_set = []
-            for action_idx in range(self._K):
-                trh_set.append(self._gaussians[action_idx].trh)
-            for video in self._videos:
-                video.valid_likelihood_update(trh_set)
+        
 
     def _video_likelihood_grid(self, video_idx):
         video = self._videos[video_idx]
@@ -287,15 +305,13 @@ class Corpus(object):
             features = self._features[video.global_range]
         else:
             features = self._embedded_feat[video.global_range]
-        for subact in range(self._K):
-            scores = self._gaussians[subact].score_samples(features)
-            if opt.bg:
-                video.likelihood_update(subact, scores,
-                                        trh=self._gaussians[subact].trh)
-            else:
-                video.likelihood_update(subact, scores)
+       
+        scores = self._classifier(torch.FloatTensor(features)).detach().numpy()
+        video._likelihood_grid = scores
         if opt.save_likelihood:
             video.save_likelihood()
+
+ 
 
     def clustering(self):
         logger.debug('.')
@@ -329,13 +345,13 @@ class Corpus(object):
 
         shuffle_labels = np.arange(len(time2label))
 
-        labels_with_bg = np.ones(len(self._total_fg_mask)) * -1
+        self.pseudo_gt_with_bg = np.ones(len(self._total_fg_mask)) * -1
 
         # use predefined by time order  for kmeans clustering
-        labels_with_bg[self._total_fg_mask] = kmeans_labels
+        self.pseudo_gt_with_bg[self._total_fg_mask] = kmeans_labels
 
         logger.debug('Order of labels: %s %s' % (str(shuffle_labels), str(sorted(time2label))))
-        accuracy.predicted_labels = labels_with_bg
+        accuracy.predicted_labels = self.pseudo_gt_with_bg
         accuracy.gt_labels = long_gt
         old_mof, total_fr = accuracy.mof()
         self._gt2label = accuracy._gt2cluster
@@ -359,9 +375,9 @@ class Corpus(object):
         ########################################################################
 
         logger.debug('Update video z for videos before GMM fitting')
-        labels_with_bg[labels_with_bg == self._K] = -1
+        self.pseudo_gt_with_bg[self.pseudo_gt_with_bg == self._K] = -1
         for video in self._videos:
-            video.update_z(labels_with_bg[video.global_range])
+            video.update_z(self.pseudo_gt_with_bg[video.global_range])
 
         for video in self._videos:
             video.segmentation['cl'] = (video._z, self._label2gt)
@@ -371,11 +387,29 @@ class Corpus(object):
         for video in self._videos:
             self._subact_counter += video.a
 
+    def generate_pi(self, pi, n_ins=0, n_del=0):
+        output = pi.copy()
+        for _ in range(n_del):
+            n = len(output)
+            idx = np.random.randint(n)
+            output.pop(idx)
+
+        for _ in range(n_ins):
+            m = len(pi)
+            val = np.random.randint(m)
+            n = len(output)
+            idx = np.random.randint(n)
+            output.insert(idx, val)
+
+        return output
+
     @timing
     def viterbi_decoding(self):
         logger.debug('.')
         self._count_subact()
         pr_orders = []
+        max_score_list = []
+        
         for video_idx, video in enumerate(self._videos):
             if video_idx % 20 == 0:
                 logger.debug('%d / %d' % (video_idx, len(self._videos)))
@@ -383,13 +417,81 @@ class Corpus(object):
                 logger.debug(str(self._subact_counter))
             if opt.bg:
                 video.update_fg_mask()
-            video.viterbi()
+
+            # for i in range(10):
+            
+            self.decoder.length_model = PoissonModel(self.mean_lengths)
+
+            max_score, max_z, max_pi = self.video_decode(video, self.decoder)
+            # print(video.shape)
+            logger.debug('video length' + str(len(video._likelihood_grid)))
+            max_score_list.append(max_score/len(video._likelihood_grid))
+
+            self.pseudo_gt_with_bg[video.global_range] = max_z
+            # self._z = np.asarray(alignment).copy()
+
+                # self.train_classifier(video)
+
+            self.buffer.add_sequence(max_z[video.fg_mask], max_pi, max_z[video.fg_mask])
+            self.update_prior()
+            self.update_mean_lengths()
+            
+
+            video._subact_count_update()
+            video._z = np.asarray(max_z).copy()
+
+            name = str(video.name) + '_' + opt.log_str + 'iter%d' % self.iter + '.txt'
+            np.savetxt(join(opt.output_dir, 'segmentation', name),
+                    np.asarray(max_z), fmt='%d')
+
+            
+            
             cur_order = list(video._pi)
             if cur_order not in pr_orders:
                 logger.debug(str(cur_order))
                 pr_orders.append(cur_order)
         self._count_subact()
+
+        logger.debug('Q value' + str(np.mean(max_score_list)))
         logger.debug(str(self._subact_counter))
+
+        # length_file = join(opt.output_dir, opt.subaction, 'mean_lengths.txt')
+        # prior_file = join(opt.output_dir, opt.subaction, 'prior.txt')
+        # np.savetxt(length_file, self.mean_lengths)
+        # np.savetxt(prior_file, self.prior)
+
+    def video_decode(self, video, decoder):
+        max_score = -np.inf
+        max_z = []
+        max_pi = []
+        pi = video._pi            
+        for i in range(1):
+            if i == 0:
+                transcript = self.generate_pi(pi, n_ins=0, n_del=0)
+            elif i <= 10:
+                transcript = self.generate_pi(pi, n_ins=1, n_del=0)
+            elif i <=20:
+                transcript = self.generate_pi(pi, n_ins=0, n_del=1)
+            elif i <=30:
+                transcript = self.generate_pi(pi, n_ins=1, n_del=1)
+
+            if np.sum(video.fg_mask):
+                log_probs = video._likelihood_grid[video.fg_mask] - np.log(self.prior)
+                log_probs = log_probs - np.max(log_probs) 
+                decoder.grammar = SingleTranscriptGrammar(transcript, self._K)
+                score, labels, segments = decoder.decode(log_probs)
+                z = np.ones(video.n_frames, dtype=int) * -1
+                z[video.fg_mask] = labels                
+            else:
+                z = np.ones(video.n_frames, dtype=int) * -1
+                score = -np.inf
+            # viterbi.calc(z)
+            if score > max_score:
+                max_score = score
+                max_z = z
+                max_pi = transcript
+
+        return max_score, max_z, max_pi
 
 
     def without_temp_emed(self):
@@ -507,5 +609,25 @@ class Corpus(object):
             feat_name = opt.resume_str + '_%s' % video.name
             np.savetxt(ops.join(opt.data, 'embed', opt.subaction, feat_name), video_features)
 
+    def update_mean_lengths(self):
+        self.mean_lengths = np.zeros( (self._K), dtype=np.float32 )
+        for label_count in self.buffer.label_counts:
+            self.mean_lengths += label_count
+        instances = np.zeros((self._K), dtype=np.float32)
+        for instance_count in self.buffer.instance_counts:
+            instances += instance_count
+        # compute mean lengths (backup to average length for unseen classes)
+        self.mean_lengths = np.array( [ self.mean_lengths[i] / instances[i] if instances[i] > 0 \
+                else sum(self.mean_lengths) / sum(instances) for i in range(self._K) ] )
 
+    def update_prior(self):
+        # count labels
+        self.prior = np.zeros((self._K), dtype=np.float32)
+        for label_count in self.buffer.label_counts:
+            self.prior += label_count
+        self.prior = self.prior / np.sum(self.prior)
+        # backup to uniform probability for unseen classes
+        n_unseen = sum(self.prior == 0)
+        self.prior = self.prior * (1.0 - float(n_unseen) / self._K)
+        self.prior = np.array( [ self.prior[i] if self.prior[i] > 0 else 1.0 / self._K for i in range(self._K) ] )
 
