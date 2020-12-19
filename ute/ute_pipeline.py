@@ -9,11 +9,16 @@ from ute.corpus import Corpus
 from ute.utils.arg_pars import opt
 from ute.utils.logging_setup import logger
 from ute.utils.util_functions import timing, update_opt_str, join_return_stat, parse_return_stat
+from os.path import join
 
 
 @timing
 def temp_embed():
-    corpus = Corpus(subaction=opt.subaction) # loads all videos, features, and gt
+    # length_file = join(opt.output_dir, 'mean_lengths.txt')
+    # prior_file = join(opt.output_dir, 'prior.txt')
+    length_file = None
+    prior_file = None
+    corpus = Corpus(subaction=opt.subaction, mean_lengths_file=length_file, prior_file=prior_file) # loads all videos, features, and gt
 
     logger.debug('Corpus with poses created')
     if opt.model_name in ['mlp']:
@@ -23,14 +28,18 @@ def temp_embed():
         corpus.without_temp_emed()
 
     corpus.clustering()
-    corpus.gaussian_model()
+    # corpus.gaussian_model()
+    corpus.train_classifier()
 
     corpus.accuracy_corpus()
 
     if opt.resume_segmentation:
         corpus.resume_segmentation()
     else:
-        corpus.viterbi_decoding()
+        for i in range(20):
+            corpus.viterbi_decoding()
+            corpus.train_classifier()
+            corpus.accuracy_corpus('{}th round'.format(i))
 
     corpus.accuracy_corpus('final')
 
