@@ -14,12 +14,14 @@ from os.path import join
 from ute.utils.arg_pars import opt
 from ute.utils.logging_setup import logger
 from ute.utils.util_functions import dir_check
-from ute.viterbi_utils.viterbi import Viterbi
-from ute.viterbi_utils.grammar import Grammar
+from ute.viterbi_utils.viterbi_w_lenth import Viterbi
+from ute.viterbi_utils.grammar import Grammar, SingleTranscriptGrammar
+from ute.viterbi_utils.length_model import PoissonModel
+
 
 class Video(object):
     """Single video with respective for the algorithm parameters"""
-    def __init__(self, path, K, *, gt=[], name='', start=0, with_bg=False):
+    def __init__(self, path, K, *, gt=[], name='', start=0, with_bg=False, frame_sampling=1):
         """
         Args:
             path (str): path to video representation
@@ -34,6 +36,7 @@ class Video(object):
         self.path = path
         self._K = K
         self.name = name
+        self._frame_sampling = frame_sampling
 
         self._likelihood_grid = None
         self._valid_likelihood = None
@@ -233,50 +236,86 @@ class Video(object):
     def get_likelihood(self):
         return self._likelihood_grid
 
-    def _viterbi_inner(self, pi, save=False):
-        grammar = Grammar(pi)
-        if np.sum(self.fg_mask):
-            viterbi = Viterbi(grammar=grammar, probs=(-1 * self._likelihood_grid[self.fg_mask]))
-            viterbi.inference()
-            viterbi.backward(strict=True)
-            z = np.ones(self.n_frames, dtype=int) * -1
-            z[self.fg_mask] = viterbi.alignment()
-            score = viterbi.loglikelyhood()
-        else:
-            z = np.ones(self.n_frames, dtype=int) * -1
-            score = -np.inf
-        # viterbi.calc(z)
-        if save:
-            name = '%s_%s' % (str(pi), self.name)
-            save_path = join(opt.output_dir, 'likelihood', name)
-            with open(save_path, 'w') as f:
-                # for pi_elem in pi:
-                #     f.write('%d ' % pi_elem)
-                # f.write('\n')
-                f.write('%s\n' % str(score))
-                for z_elem in z:
-                    f.write('%d ' % z_elem)
-        return z, score
+    def generate_pi(self, pi, n_ins=1, n_del=1):
+        output = pi.copy()
+        for _ in range(n_del):
+            n = len(output)
+            idx = np.random.randint(n)
+            output.pop(idx)
 
-    # @timing
-    def viterbi(self, pi=None):
+        for _ in range(n_ins):
+            m = len(pi)
+            val = np.random.randint(m)
+            n = len(output)
+            idx = np.random.randint(n)
+            output.insert(idx, val)
 
-        if pi is None:
-            pi = self._pi
-        log_probs = self._likelihood_grid
-        if np.max(log_probs) > 0:
-            self._likelihood_grid = log_probs - (2 * np.max(log_probs))
-        alignment, return_score = self._viterbi_inner(pi, save=True)
-        self._z = np.asarray(alignment).copy()
+        return output
 
-        self._subact_count_update()
+    # def _viterbi_inner(self, pi, save=False):
+    #     max_score = -np.inf
+    #     max_z = []
+    #     max_pi = []
+        
+    #     for i in range(1):
+    #         if i == 0:
+    #             new_pi = self.generate_pi(pi, n_ins=0, n_del=0)
+    #         elif i <= 10:
+    #             new_pi = self.generate_pi(pi, n_ins=1, n_del=0)
+    #         elif i <=20:
+    #             new_pi = self.generate_pi(pi, n_ins=0, n_del=1)
+    #         elif i <=30:
+    #             new_pi = self.generate_pi(pi, n_ins=1, n_del=1)
+    #         # grammar = Grammar(new_pi)
 
-        name = str(self.name) + '_' + opt.log_str + 'iter%d' % self.iter + '.txt'
-        np.savetxt(join(opt.output_dir, 'segmentation', name),
-                   np.asarray(self._z), fmt='%d')
-        # print('path alignment:', join(opt.data, 'segmentation', name))
+    #         # logger.debug('---Jun log: pi={}'.format(pi))
+    #         # for state_idx, state in enumerate(grammar.states()):
+    #         #     logger.debug('---Jun log: state={}'.format(state))
+    #         if np.sum(self.fg_mask):
+    #             log_probs = -1 * self._likelihood_grid[self.fg_mask]
+    #             z = np.ones(self.n_frames, dtype=int) * -1
+    #             z[self.fg_mask] = labels                
+    #         else:
+    #             z = np.ones(self.n_frames, dtype=int) * -1
+    #             score = -np.inf
+    #         # viterbi.calc(z)
+    #         if score > max_score:
+    #             max_score = score
+    #             max_z = z
+    #             max_pi = new_pi
 
-        return return_score
+    #     if save:
+    #         name = '%s_%s' % (str(pi), self.name)
+    #         save_path = join(opt.output_dir, 'likelihood', name)
+    #         with open(save_path, 'w') as f:
+    #             # for pi_elem in pi:
+    #             #     f.write('%d ' % pi_elem)
+    #             # f.write('\n')
+    #             f.write('%s\n' % str(score))
+    #             for z_elem in z:
+    #                 f.write('%d ' % z_elem)
+    #     return max_z, max_score
+
+    # # @timing
+    # def viterbi(self, pi=None):
+
+    #     if pi is None:
+    #         pi = self._pi
+    #     log_probs = self._likelihood_grid
+    #     if np.max(log_probs) > 0:
+    #         self._likelihood_grid = log_probs - (2 * np.max(log_probs))
+    #     alignment, return_score = self._viterbi_inner(pi, save=True)
+    #     self._z = np.asarray(alignment).copy()
+
+    #     self._subact_count_update()
+
+    #     name = str(self.name) + '_' + opt.log_str + 'iter%d' % self.iter + '.txt'
+    #     np.savetxt(join(opt.output_dir, 'segmentation', name),
+    #                np.asarray(self._z), fmt='%d')
+
+    #     # print('path alignment:', join(opt.data, 'segmentation', name))
+
+    #     return return_score
 
     def update_fg_mask(self):
         self.fg_mask = np.sum(self._valid_likelihood, axis=1) > 0
@@ -285,7 +324,3 @@ class Video(object):
         name = str(self.name) + '_' + opt.log_str + 'iter%d' % self.iter + '.txt'
         self._z = np.loadtxt(join(opt.output_dir, 'segmentation', name))
         self._subact_count_update()
-
-
-
-
