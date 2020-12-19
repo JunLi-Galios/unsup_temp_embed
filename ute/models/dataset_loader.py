@@ -74,6 +74,41 @@ class RelTimeDataset(FeatureDataset):
             # video_features = join_data(None, (time_label, video_features),
             #                             np.hstack)
 
+class PseudoGTDataset(FeatureDataset):
+    def __init__(self, videos, features, pseudo_gt):
+        logger.debug('Relative time labels')
+        super().__init__(videos, features)
+
+        temp_features = None  # used only if opt.concat > 1
+        for video in self._videos:
+            
+            video_features = self._features[video.global_range]
+            video_pseudo_gt = pseudo_gt[video.global_range]
+
+            video_pseudo_gt = np.expand_dims(video_pseudo_gt, axis=1)
+
+            temp_features = join_data(temp_features, video_features, np.vstack)
+
+            self._gt = join_data(self._gt, video_pseudo_gt, np.vstack)
+            # video_features = join_data(None, (time_label, video_features),
+            #                             np.hstack)
+
+class SingleVideoDataset(FeatureDataset):
+    def __init__(self, videos, features, pseudo_gt, video):
+        logger.debug('Relative time labels')
+        super().__init__(videos, features)
+
+        temp_features = None  # used only if opt.concat > 1
+            
+        video_features = self._features[video.global_range]
+        video_pseudo_gt = pseudo_gt[video.global_range]
+
+        video_pseudo_gt = np.expand_dims(video_pseudo_gt, axis=1)
+
+        temp_features = join_data(temp_features, video_features, np.vstack)
+
+        self._gt = join_data(self._gt, video_pseudo_gt, np.vstack)
+
 
 def load_ground_truth(videos, features, shuffle=True):
     logger.debug('load data with ground truth labels for training some embedding')
@@ -94,6 +129,31 @@ def load_reltime(videos, features, shuffle=True):
         dataset = RelTimeDataset(videos, features)
     if opt.model_name == 'tcn':
         dataset = TCNDataset(videos, features)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size,
+                                             shuffle=shuffle,
+                                             num_workers=opt.num_workers)
+
+    return dataloader
+
+
+def load_pseudo_gt(videos, features, pseudo_gt, shuffle=True):
+    logger.debug('load data with pseudo ground truth')
+    torch.manual_seed(opt.seed)
+    np.random.seed(opt.seed)
+
+    dataset = PseudoGTDataset(videos, features, pseudo_gt)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size,
+                                             shuffle=shuffle,
+                                             num_workers=opt.num_workers)
+
+    return dataloader
+
+def load_single_video(videos, features, pseudo_gt, video, shuffle=True):
+    logger.debug('load data with single video dataset')
+    torch.manual_seed(opt.seed)
+    np.random.seed(opt.seed)
+
+    dataset = SingleVideoDataset(videos, features, pseudo_gt, video)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size,
                                              shuffle=shuffle,
                                              num_workers=opt.num_workers)
