@@ -10,6 +10,7 @@ __date__ = 'June 2019'
 import sys
 import os
 sys.path.append(os.path.abspath('.').split('data_utils')[0])
+sys.path.append('/scratch/liju2/unsupervised_AS/unsup_temp_embed_learned_classifier')
 
 from ute.utils.arg_pars import opt
 from data_utils.BF_utils.update_argpars import update
@@ -18,12 +19,12 @@ from ute.ute_pipeline import temp_embed, all_actions
 if __name__ == '__main__':
 
     # set root
-    opt.dataset_root = '/BS/kukleva/work/data/bf/fv'
+    opt.dataset_root = '/scratch/liju2/data/us_as/Breakfast'
 
     # set one of  activity
     #['coffee', 'cereals', 'tea', 'milk', 'juice', 'sandwich', 'scrambledegg', 'friedegg', 'salat', 'pancake']
     # all
-    opt.subaction = 'all'
+    opt.subaction = 'juice'
     # set feature extension and dimensionality
     opt.ext = 'txt'
     opt.feature_dim = 64
