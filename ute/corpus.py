@@ -258,7 +258,7 @@ class Corpus(object):
 
             relative_time = self._embedding(self._embedded_feat.float()).detach().numpy().reshape((-1, 1))
 
-            self._embedded_feat = self._embedding.embedded(self._embedded_feat.float()).detach().numpy()
+            self._embedded_feat = self._embedding.embedded(self._embedded_feat.float().cuda()).cpu().detach().numpy()
             self._embedded_feat = np.squeeze(self._embedded_feat)
 
         if opt.save_embed_feat:
@@ -426,6 +426,9 @@ class Corpus(object):
             # print(video.shape)
             logger.debug('video length' + str(len(video._likelihood_grid)))
             max_score_list.append(max_score/len(video._likelihood_grid))
+            
+            if len(max_z) <= 0:
+                continue
 
             self.pseudo_gt_with_bg[video.global_range] = max_z
             # self._z = np.asarray(alignment).copy()
