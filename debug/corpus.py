@@ -465,9 +465,9 @@ class Corpus(object):
         selected_z = []
 
         for a in selected_pi:
-            idx = np.random.randint(0, len(max_z) - 30)
+            idx = np.random.randint(0, len(max_z) - 10)
             while max_z[idx] != a:
-                idx = np.random.randint(0, len(max_z) - 30)            
+                idx = np.random.randint(0, len(max_z) - 10)            
             if max_z[idx+4] == a:
                 selected_z += [idx, idx+1, idx+2, idx+3, idx+4]
             else:
