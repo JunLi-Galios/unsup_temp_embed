@@ -172,7 +172,7 @@ def load_single_video(videos, features, pseudo_gt, video, shuffle=True):
     return dataloader
 
 
-def load_asal_dataset(videos, features, pseudo_gt):
+def load_asal_dataset(videos, features, pseudo_gt, shuffle=True):
     logger.debug('load data with asal')
     torch.manual_seed(opt.seed)
     np.random.seed(opt.seed)
