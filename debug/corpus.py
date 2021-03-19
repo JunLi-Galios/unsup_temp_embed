@@ -312,7 +312,7 @@ class Corpus(object):
 
         num_epoch = 5
 
-        model, loss, optimizer = asal_cls.create_model(self._K)
+        model, loss, optimizer = asal_cls.create_model(self._embedding)
 
         model = training_cls(dataloader, num_epoch,
                                        save=opt.save_model,
@@ -517,14 +517,14 @@ class Corpus(object):
                 ordered_frame_idx = self.selected_idx(max_z, max_pi, ordered=True)
                 selected_video_features = video.features()[ordered_frame_idx,:]
                 # selected_gt = max_z[ordered_frame_idx]
-                self.asal_feature = join_data(self.asal_feature, selected_video_features, np.vstack)
+                self.asal_feature = join_data(self.asal_feature, selected_video_features, np.dstack)
                 self.asal_gt = join_data(self.asal_gt, [1], np.vstack)
 
             for i in range(5):
                 shuffled_frame_idx = self.selected_idx(max_z, max_pi, ordered=False)
                 selected_video_features = video.features()[shuffled_frame_idx,:]
                 # selected_gt = max_z[shuffled_frame_idx]
-                self.asal_feature = join_data(self.asal_feature, selected_video_features, np.vstack)
+                self.asal_feature = join_data(self.asal_feature, selected_video_features, np.dstack)
                 self.asal_gt = join_data(self.asal_gt, [0], np.vstack)
 
 
@@ -547,6 +547,8 @@ class Corpus(object):
                 logger.debug(str(cur_order))
                 pr_orders.append(cur_order)
         self._count_subact()
+
+        self.asal_feature = torch.transpose(self.asal_feature, (2, 0, 1))
 
         logger.debug('Q value' + str(np.mean(max_score_list)))
         logger.debug(str(self._subact_counter))
