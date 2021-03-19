@@ -258,7 +258,7 @@ class Corpus(object):
 
             relative_time = self._embedding(self._embedded_feat.float()).detach().numpy().reshape((-1, 1))
 
-            self._embedded_feat = self._embedding.embedded(self._embedded_feat.float().cuda()).cpu().detach().numpy()
+            self._embedded_feat = self._embedding.embedded(self._embedded_feat.float()).detach().numpy()
             self._embedded_feat = np.squeeze(self._embedded_feat)
 
         if opt.save_embed_feat:
