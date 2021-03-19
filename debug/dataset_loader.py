@@ -178,7 +178,7 @@ def load_asal_dataset(videos, features, pseudo_gt, shuffle=True):
     np.random.seed(opt.seed)
 
     dataset = ASALVideoDataset(videos, features, pseudo_gt)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size,
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=5,
                                              shuffle=shuffle,
                                              num_workers=opt.num_workers)
 
