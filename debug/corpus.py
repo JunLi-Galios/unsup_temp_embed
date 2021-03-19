@@ -21,7 +21,7 @@ from sklearn.cluster import MiniBatchKMeans
 
 from ute.video import Video
 from ute.models import mlp
-from ute.models import cls
+from ute.models import cls, fixed_width_rnn, asal_cls
 from ute.utils.arg_pars import opt
 from ute.utils.logging_setup import logger
 from ute.eval_utils.accuracy_class import Accuracy
@@ -312,23 +312,26 @@ class Corpus(object):
 
         num_epoch = 5
 
-        model, loss, optimizer = cls.create_model(self._K)
+        model, loss, optimizer = asal_cls.create_model(self._K)
 
-        self._embedding = training_cls(dataloader, num_epoch,
+        model = training_cls(dataloader, num_epoch,
                                        save=opt.save_model,
                                        model=model,
                                        loss=loss,
                                        optimizer=optimizer,
                                        name=opt.model_name)
 
+        self._embedding = model._embedding
+
         # update embeded_feature
         self._embedding.eval()
+        self._embedding = self._embedding.cpu()
+
         unshuffled_dataloader = load_reltime(videos=self._videos,
                                              features=self._features,
                                              shuffle=False)
 
-        self._embedding = self._embedding.cpu()
-
+        
         self._embedded_feat = None
         for batch_features, batch_gtreltime in unshuffled_dataloader:
             if self._embedded_feat is None:
@@ -462,9 +465,9 @@ class Corpus(object):
         selected_z = []
 
         for a in selected_pi:
-            idx = np.random.randint(0, len(max_z))
+            idx = np.random.randint(0, len(max_z) - 30)
             while max_z[idx] != a:
-                idx = np.random.randint(0, len(max_z))            
+                idx = np.random.randint(0, len(max_z) - 30)            
             if max_z[idx+4] == a:
                 selected_z += [idx, idx+1, idx+2, idx+3, idx+4]
             else:
@@ -513,16 +516,16 @@ class Corpus(object):
             for i in range(5):
                 ordered_frame_idx = self.selected_idx(max_z, max_pi, ordered=True)
                 selected_video_features = video.features()[ordered_frame_idx,:]
-                selected_gt = max_z[ordered_frame_idx]
+                # selected_gt = max_z[ordered_frame_idx]
                 self.asal_feature = join_data(self.asal_feature, selected_video_features, np.vstack)
-                self.asal_gt = join_data(self.asal_gt, selected_gt, np.vstack)
+                self.asal_gt = join_data(self.asal_gt, [1], np.vstack)
 
             for i in range(5):
                 shuffled_frame_idx = self.selected_idx(max_z, max_pi, ordered=False)
                 selected_video_features = video.features()[shuffled_frame_idx,:]
-                selected_gt = max_z[shuffled_frame_idx]
+                # selected_gt = max_z[shuffled_frame_idx]
                 self.asal_feature = join_data(self.asal_feature, selected_video_features, np.vstack)
-                self.asal_gt = join_data(self.asal_gt, selected_gt, np.vstack)
+                self.asal_gt = join_data(self.asal_gt, [0], np.vstack)
 
 
             self.buffer.add_sequence(max_z[video.fg_mask], max_pi, max_z[video.fg_mask])
