@@ -29,8 +29,9 @@ class ASAL_CLS(nn.Module):
     def forward(self, x):
         output = F.relu(self.fc1(x))
         output = F.relu(self.fc2(output))
-        output = self.out_fc(output)
         output = torch.reshape(output, (output.size()[0], -1))
+
+        output = self.out_fc(output)
         output = nn.functional.log_softmax(output, dim=1)
 
         return output
