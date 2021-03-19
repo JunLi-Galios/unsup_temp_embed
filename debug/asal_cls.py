@@ -16,20 +16,21 @@ from ute.utils.logging_setup import logger
 
 
 class ASAL_CLS(nn.Module):
-    def __init__(self, embedding, hidden_dim1, hidden_dim2):
+    def __init__(self, embedding, hidden_dim1, hidden_dim2, width):
         super(ASAL_CLS, self).__init__()
 
         self._embedding = embedding
 
         self.fc1 = nn.Linear(opt.embed_dim, hidden_dim1)
         self.fc2 = nn.Linear(hidden_dim1, hidden_dim2)
-        self.out_fc = nn.Linear(hidden_dim2, 2)
+        self.out_fc = nn.Linear(hidden_dim2 * width, 2)
         self._init_weights()
 
     def forward(self, x):
         output = F.relu(self.fc1(x))
         output = F.relu(self.fc2(output))
         output = self.out_fc(output)
+        output = torch.reshape(output, (output.size()[0], -1))
         output = nn.functional.log_softmax(output, dim=1)
 
         return output
@@ -41,9 +42,9 @@ class ASAL_CLS(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
 
-def create_model(K, dim1=40, dim2=40):
+def create_model(embedding, dim1=40, dim2=40, width=15):
     torch.manual_seed(opt.seed)
-    model = ASAL_CLS(K, dim1, dim2).to(opt.device)
+    model = ASAL_CLS(embedding, dim1, dim2, width).to(opt.device)
     loss = nn.NLLLoss()
     # loss = nn.MSELoss().cuda()
     optimizer = torch.optim.Adam(model.parameters(),
