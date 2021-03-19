@@ -21,8 +21,8 @@ class ASAL_CLS(nn.Module):
 
         self._embedding = embedding
 
-        self.fc1 = nn.Linear(opt.embed_dim, opt.hidden_dim1)
-        self.fc2 = nn.Linear(opt.hidden_dim1, opt.hidden_dim2)
+        self.fc1 = nn.Linear(opt.embed_dim, hidden_dim1)
+        self.fc2 = nn.Linear(hidden_dim1, hidden_dim2)
         self.out_fc = nn.Linear(hidden_dim2, 2)
         self._init_weights()
 
