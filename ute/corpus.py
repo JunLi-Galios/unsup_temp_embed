@@ -306,7 +306,7 @@ class Corpus(object):
         else:
             features = self._embedded_feat[video.global_range]
        
-        scores = self._classifier(torch.FloatTensor(features)).detach().numpy()
+        scores = self._classifier(torch.FloatTensor(features)).cpu().detach().numpy()
         video._likelihood_grid = scores
         if opt.save_likelihood:
             video.save_likelihood()
