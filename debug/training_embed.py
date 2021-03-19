@@ -203,6 +203,8 @@ def training_cls(train_loader, epochs, save, **kwargs):
     return model
 
 
+
+
 def load_model():
     if opt.loaded_model_name:
         if opt.global_pipe:
