@@ -43,7 +43,7 @@ class ASAL_CLS(nn.Module):
 
 def create_model(K):
     torch.manual_seed(opt.seed)
-    model = CLS(K).to(opt.device)
+    model = ASAL_CLS(K).to(opt.device)
     loss = nn.NLLLoss()
     # loss = nn.MSELoss().cuda()
     optimizer = torch.optim.Adam(model.parameters(),
