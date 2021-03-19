@@ -41,9 +41,9 @@ class ASAL_CLS(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
 
-def create_model(K):
+def create_model(K, dim1=40, dim2=40):
     torch.manual_seed(opt.seed)
-    model = ASAL_CLS(K).to(opt.device)
+    model = ASAL_CLS(K, dim1, dim2).to(opt.device)
     loss = nn.NLLLoss()
     # loss = nn.MSELoss().cuda()
     optimizer = torch.optim.Adam(model.parameters(),
