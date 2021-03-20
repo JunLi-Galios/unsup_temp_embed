@@ -27,30 +27,38 @@ class ASAL_CLS(nn.Module):
         self._init_weights()
 
     def forward(self, x):
-        output = F.relu(self.fc1(x))
+#         logger.debug('ASAL_CLS: input size={}'.format(x.size()))
+        output = self._embedding.embedded(x)
+#         logger.debug('ASAL_CLS: output0 size={}'.format(output.size()))
+        output = F.relu(self.fc1(output))
+#         logger.debug('ASAL_CLS: output1 size={}'.format(output.size()))
         output = F.relu(self.fc2(output))
         output = torch.reshape(output, (output.size()[0], -1))
-
+#         logger.debug('ASAL_CLS: output2 size={}'.format(output.size()))
         output = self.out_fc(output)
+#         logger.debug('ASAL_CLS: output3 size={}'.format(output.size()))
         output = nn.functional.log_softmax(output, dim=1)
 
         return output
 
     def _init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
+        nn.init.normal_(self.fc1.weight, 0, 0.01)
+        nn.init.constant_(self.fc1.bias, 0)
+        nn.init.normal_(self.fc2.weight, 0, 0.01)
+        nn.init.constant_(self.fc2.bias, 0)
+        nn.init.normal_(self.out_fc.weight, 0, 0.01)
+        nn.init.constant_(self.out_fc.bias, 0)
 
 
 def create_model(embedding, dim1=40, dim2=40, width=15):
     torch.manual_seed(opt.seed)
-    model = ASAL_CLS(embedding, dim1, dim2, width).to(opt.device)
+    model = ASAL_CLS(embedding, dim1, dim2, width)
     loss = nn.NLLLoss()
     # loss = nn.MSELoss().cuda()
-    optimizer = torch.optim.Adam(model.parameters(),
-                                 lr=opt.lr * 0.1,
-                                 weight_decay=opt.weight_decay)
+    optimizer = torch.optim.SGD(model.parameters(),
+                                 lr=opt.lr_asal,
+                                 momentum=0,
+                                 weight_decay=0)
     logger.debug(str(model))
     logger.debug(str(loss))
     logger.debug(str(optimizer))
