@@ -31,7 +31,7 @@ from ute.utils.visualization import Visual, plot_segm
 from ute.probabilistic_utils.gmm_utils import AuxiliaryGMM, GMM_trh
 from ute.eval_utils.f1_score import F1Score
 from ute.models.dataset_loader import load_reltime, load_pseudo_gt, load_single_video, load_asal_dataset
-from ute.models.training_embed import load_model, training, training_cls
+from ute.models.training_embed import load_model, training, training_cls, training_asal
 from ute.viterbi_utils.grammar import SingleTranscriptGrammar
 from ute.viterbi_utils.length_model import PoissonModel
 from ute.viterbi_utils.viterbi_w_lenth import Viterbi
@@ -260,6 +260,8 @@ class Corpus(object):
 
             self._embedded_feat = self._embedding.embedded(self._embedded_feat.float()).detach().numpy()
             self._embedded_feat = np.squeeze(self._embedded_feat)
+            
+        self.asal_model, self.asal_loss, self.asal_optimizer = asal_cls.create_model(self._embedding)
 
         if opt.save_embed_feat:
             self.save_embed_feat()
@@ -310,18 +312,17 @@ class Corpus(object):
                                     features=self.asal_feature,
                                     pseudo_gt=self.asal_gt)
 
-        num_epoch = 5
+        num_epoch = 10
 
-        model, loss, optimizer = asal_cls.create_model(self._embedding)
+        
+        training_asal(dataloader, num_epoch,
+                                save=opt.save_model,
+                                model=self.asal_model,
+                                loss=self.asal_loss,
+                                optimizer=self.asal_optimizer,
+                                name=opt.model_name)
 
-        model = training_cls(dataloader, num_epoch,
-                                       save=opt.save_model,
-                                       model=model,
-                                       loss=loss,
-                                       optimizer=optimizer,
-                                       name=opt.model_name)
-
-        self._embedding = model._embedding
+#         self._embedding = model._embedding
 
         # update embeded_feature
         self._embedding.eval()
@@ -349,6 +350,9 @@ class Corpus(object):
             features = self._features[video.global_range]
         else:
             features = self._embedded_feat[video.global_range]
+            
+#         logger.debug("features{}".format(features))
+#         logger.debug("self._classifier{}".format(self._classifier))
        
         scores = self._classifier(torch.FloatTensor(features).cuda()).cpu().detach().numpy()
         video._likelihood_grid = scores
@@ -500,7 +504,7 @@ class Corpus(object):
 
             max_score, max_z, max_pi = self.video_decode(video, self.decoder)
             # print(video.shape)
-            logger.debug('video length' + str(len(video._likelihood_grid)))
+#             logger.debug('video length' + str(len(video._likelihood_grid)))
             max_score_list.append(max_score/len(video._likelihood_grid))
 
             if len(max_z) <=0:
@@ -546,9 +550,12 @@ class Corpus(object):
             if cur_order not in pr_orders:
                 logger.debug(str(cur_order))
                 pr_orders.append(cur_order)
-        self._count_subact()
 
-        self.asal_feature = torch.transpose(self.asal_feature, (2, 0, 1))
+        self.asal_feature = np.transpose(self.asal_feature, (2, 0, 1))
+        logger.debug('----------------------------asal feature shape={}'.format(np.shape(self.asal_feature)))
+        # self.asal_gt = np.transpose(self.asal_gt, (1, 0))
+        logger.debug('----------------------------asal gt shape={}'.format(np.shape(self.asal_gt)))
+        self._count_subact()
 
         logger.debug('Q value' + str(np.mean(max_score_list)))
         logger.debug(str(self._subact_counter))
