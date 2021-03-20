@@ -36,7 +36,7 @@ def temp_embed():
     if opt.resume_segmentation:
         corpus.resume_segmentation()
     else:
-        for i in range(20):
+        for i in range(30):
             corpus.viterbi_decoding()
             corpus.train_asal()
             corpus.train_classifier()
